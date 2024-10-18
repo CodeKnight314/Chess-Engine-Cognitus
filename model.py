@@ -37,7 +37,7 @@ class Renatus(nn.Module):
         
         self.bottleneck = nn.Linear(16384, 1024)
         
-        self.q_layers = nn.Linear(1024, 4672)
+        self.q_layers = nn.Linear(1024, 4096)
         
     def forward(self, x): 
         x = self.relu(self.conv_one(x))

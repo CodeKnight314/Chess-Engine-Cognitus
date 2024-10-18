@@ -6,6 +6,7 @@ import configs
 import numpy as np
 
 from model import Renatus, choose_legal_move, ReplayMemory
+from tqdm import tqdm
 
 def get_state(board):
     """
@@ -82,7 +83,7 @@ def train():
     Main training loop.
     """
     steps_done = 0
-    for episode in range(configs.NUM_EPISODES):
+    for episode in tqdm(range(configs.NUM_EPISODES)):
         board = chess.Board()
         state = get_state(board)
         done = False
