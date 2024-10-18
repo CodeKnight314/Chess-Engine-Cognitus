@@ -1,9 +1,10 @@
 import pygame
 import chess
-from model import Renatus, choose_legal_move, get_state  # Import from your model.py
+from model import Renatus, choose_legal_move  # Import from your model.py
 from board import Board
 from configs import * # Import constants from configs.py
 import torch
+from train import get_state
 
 class Game:
     def __init__(self):
