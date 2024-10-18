@@ -8,7 +8,7 @@ import numpy as np
 from model import Renatus, choose_legal_move, ReplayMemory
 from tqdm import tqdm
 
-def get_state(board):
+def get_state(board: chess.Board):
     """
     Converts a chess.Board object into a PyTorch tensor representation.
     Returns a tensor of shape (12, 8, 8) representing the 12 bitboards.
@@ -24,7 +24,7 @@ def get_state(board):
                 state[index, row, col] = 1
     return torch.tensor(state, dtype=torch.float32).to(device)
 
-def get_reward(board):
+def get_reward(board: chess.Board):
     """
     Calculates the reward for a given board state.
     """
