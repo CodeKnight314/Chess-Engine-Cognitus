@@ -33,7 +33,10 @@ class Board:
                 color = self.board_color1 if (row + col) % 2 == 0 else self.board_color2
                 pygame.draw.rect(self.screen, color, (square_x, square_y, self.square_size, self.square_size))
 
-                piece = board.piece_at(chess.square(col, 7 - row))  # Note: Flipping row for correct orientation
+                # Correctly calculate the board square considering the visual flip
+                board_square = chess.square(col, 7 - row)  
+                
+                piece = board.piece_at(board_square)
                 if piece:
                     piece_name = piece.symbol()
                     image = self.piece_images[piece_name]
@@ -41,11 +44,14 @@ class Board:
                     self.screen.blit(image, image_rect)
 
                 # Highlight selected square and legal moves
-                square_index = row * 8 + col
-                if square_index == selected_square:
+                if board_square == selected_square:
                     pygame.draw.rect(self.screen, self.highlight_color, (square_x, square_y, self.square_size, self.square_size), 4)
-                if chess.Move(selected_square, square_index) in legal_moves:
-                    pygame.draw.circle(self.screen, self.highlight_color, (square_x + self.square_size // 2, square_y + self.square_size // 2), 10)
+
+                if selected_square is not None:
+                    # Check if the move is legal
+                    move = chess.Move(selected_square, board_square)
+                    if move in legal_moves:
+                        pygame.draw.circle(self.screen, self.highlight_color, (square_x + self.square_size // 2, square_y + self.square_size // 2), 10)
                     
 def test_board_visualization():
     """
@@ -57,15 +63,36 @@ def test_board_visualization():
     board = chess.Board()
     board_ui = Board(screen)
 
+    selected_square = None
+    legal_moves = []
+
     running = True
     while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                mouse_x, mouse_y = event.pos
+                col = mouse_x // 64
+                row = mouse_y // 64
+                clicked_square = chess.square(col, 7 - row)  # Correctly handle the flipped row
+
+                if selected_square is None:
+                    # Select the square and get legal moves
+                    if board.piece_at(clicked_square) and board.piece_at(clicked_square).color == board.turn:
+                        selected_square = clicked_square
+                        legal_moves = [move for move in board.legal_moves if move.from_square == selected_square]
+                else:
+                    # Attempt to make the move
+                    move = chess.Move(selected_square, clicked_square)
+                    if move in board.legal_moves:
+                        board.push(move)
+                    selected_square = None
+                    legal_moves = []
 
         screen.fill((0, 0, 0))  # Clear the screen   
 
-        board_ui.draw(board)  # Draw the chessboard
+        board_ui.draw(board, selected_square, legal_moves)  # Draw the chessboard
         pygame.display.flip()  # Update the display
 
     pygame.quit()

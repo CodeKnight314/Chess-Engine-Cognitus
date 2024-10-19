@@ -41,7 +41,9 @@ def supervised_train(args):
     output_path = os.path.join(args.path, "saved_weights/")
     os.makedirs(output_path, exist_ok=True)
     
-    model = Renatus(12, 5).to(device)  # Ensure model is moved to the appropriate device
+    model = Renatus(12, 5)  # Ensure model is moved to the appropriate device
+    model.q_layers = torch.nn.Linear(1024, 12*8*8)
+    model = model.to(device)
     opt = optim.AdamW(model.parameters(), lr=args.lr, betas=(0.9, 0.999), eps=1e-8, weight_decay=1e-3)
     
     criterion = torch.nn.MSELoss()
@@ -59,6 +61,7 @@ def supervised_train(args):
             state, next_state = state.to(device), next_state.to(device)
             
             prediction = model(state)
+            prediction = prediction.view(-1, 12, 8, 8)
             
             loss = criterion(prediction, next_state)
             loss.backward() 

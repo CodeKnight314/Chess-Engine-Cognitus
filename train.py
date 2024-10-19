@@ -5,6 +5,7 @@ import chess
 import configs
 import numpy as np
 
+import argparse
 from model import Renatus, choose_legal_move, ReplayMemory
 from tqdm import tqdm
 
@@ -24,17 +25,63 @@ def get_state(board: chess.Board):
                 state[index, row, col] = 1
     return torch.tensor(state, dtype=torch.float32).to(device)
 
+def get_material_score(board: chess.Board):
+    piece_values = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9}
+    white_score = sum(piece_values[piece] for piece in chess.PIECE_TYPES if piece in board.pieces(piece, chess.WHITE))
+    black_score = sum(piece_values[piece] for piece in chess.PIECE_TYPES if piece in board.pieces(piece, chess.BLACK))
+    return white_score - black_score if board.turn == chess.WHITE else black_score - white_score
+
+def get_positional_reward(board: chess.Board):
+    center_squares = [chess.D4, chess.D5, chess.E4, chess.E5]
+    reward = 0
+    for square in center_squares:
+        if board.piece_at(square) is not None:
+            piece = board.piece_at(square)
+            reward += 0.1 if piece.color == board.turn else -0.1
+    return reward
+
+def get_development_reward(board: chess.Board):
+    reward = 0
+    # Reward castling
+    if board.is_castling(board.peek()):
+        reward += 0.5
+    # Reward piece development: if minor pieces (Knight/Bishop) are off their starting positions
+    starting_positions = {
+        chess.WHITE: [chess.B1, chess.G1, chess.C1, chess.F1],
+        chess.BLACK: [chess.B8, chess.G8, chess.C8, chess.F8]
+    }
+    for square in starting_positions[board.turn]:
+        if not board.piece_at(square):
+            reward += 0.1
+    return reward
+
 def get_reward(board: chess.Board):
     """
-    Calculates the reward for a given board state.
+    Calculates the reward for a given board state, encouraging good play.
     """
+    # Winning/Draw reward
     if board.is_checkmate():
         return 1.0  # Winning
     elif board.is_stalemate() or board.is_insufficient_material() or \
          board.is_fivefold_repetition() or board.is_seventyfive_moves():
         return 0.0  # Draw
-    else:
-        return -0.01  # Small negative reward to encourage faster wins
+
+    # Material score difference reward
+    material_reward = 0.01 * get_material_score(board)
+
+    # Positional control reward
+    positional_reward = get_positional_reward(board)
+
+    # Piece development reward
+    development_reward = get_development_reward(board)
+
+    # Discourage too many moves without a goal
+    negative_move_penalty = -0.01
+
+    # Total reward calculation
+    total_reward = material_reward + positional_reward + development_reward + negative_move_penalty
+
+    return total_reward
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -78,11 +125,23 @@ def optimize_model():
         param.grad.data.clamp_(-1, 1)
     optimizer.step()
 
-def train():
+def train(args):
     """
     Main training loop.
     """
     steps_done = 0
+
+    if args.path:
+        pretrained_dict = torch.load(args.path, weights_only=True)
+        model_dict = model.state_dict()
+
+        # Filter out unmatched keys
+        pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict and v.size() == model_dict[k].size()}
+
+        model_dict.update(pretrained_dict)
+        model.load_state_dict(model_dict, strict=False)
+        target_net.load_state_dict(model_dict, strict=False)
+
     for episode in tqdm(range(configs.NUM_EPISODES)):
         board = chess.Board()
         state = get_state(board)
@@ -127,4 +186,7 @@ def train():
     torch.save(model.state_dict(), 'renatus_chess_model.pth')  # Save the trained model
 
 if __name__ == "__main__":
-    train()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--path", type=str, required=False, help="Pretrained model weights if available")
+    args = parser.parse_args()
+    train(args)
