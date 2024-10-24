@@ -4,17 +4,51 @@ import torch.optim as optim
 import chess
 import configs
 import numpy as np
-
+from collections import namedtuple
 import argparse
-from model import Renatus, choose_legal_move, ReplayMemory
+from model import RenatusV2
 from tqdm import tqdm
+import random
+from mct_search import MonteSearch, Node
+
+class ReplayMemory:
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.memory = []
+        self.position = 0
+        self.Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
+
+    def push(self, *args):
+        """Saves a transition."""
+        if len(self.memory) < self.capacity:
+            self.memory.append(None)
+        self.memory[self.position] = self.Transition(*args)
+        self.position = (self.position + 1) % self.capacity
+
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
+
+    def __len__(self):
+        return len(self.memory)
+
+def choose_legal_move(model: nn.Module, board: chess.Board, state: torch.Tensor, epsilon: float):
+    if random.random() < epsilon:
+        legal_moves = list(board.legal_moves)
+        return random.choice(legal_moves)
+    else:
+        # Use MCTS to choose the best move
+        root = Node(board)
+        best_board = MonteSearch(root, model, num_iterations=100)
+        return best_board.move_stack[-1]
 
 def get_state(board: chess.Board):
     """
     Converts a chess.Board object into a PyTorch tensor representation.
-    Returns a tensor of shape (12, 8, 8) representing the 12 bitboards.
+    Returns a tensor of shape (27, 8, 8) representing the enriched chess board state.
     """
-    state = np.zeros((12, 8, 8), dtype=np.float32)
+    state = np.zeros((27, 8, 8), dtype=np.float32)
+
+    # Encode piece types (12 planes: 6 for white pieces, 6 for black pieces)
     for piece_type in chess.PIECE_TYPES:
         for color in chess.COLORS:
             pieces = board.pieces(piece_type, color)
@@ -23,7 +57,46 @@ def get_state(board: chess.Board):
                 row = square // 8
                 col = square % 8
                 state[index, row, col] = 1
-    return torch.tensor(state, dtype=torch.float32).to(device)
+
+    # Side to move (1 plane)
+    if board.turn == chess.WHITE:
+        state[12, :, :] = 1
+
+    # Castling rights (2 planes: one for white, one for black)
+    if board.has_kingside_castling_rights(chess.WHITE):
+        state[13, :, :] = 1
+    if board.has_queenside_castling_rights(chess.WHITE):
+        state[13, :, :] = 1
+    if board.has_kingside_castling_rights(chess.BLACK):
+        state[14, :, :] = 1
+    if board.has_queenside_castling_rights(chess.BLACK):
+        state[14, :, :] = 1
+
+    # En passant square (1 plane)
+    if board.ep_square is not None:
+        row = board.ep_square // 8
+        col = board.ep_square % 8
+        state[15, row, col] = 1
+
+    # Half-move clock (1 plane)
+    state[16, :, :] = board.halfmove_clock / 100.0
+
+    # Full-move number (1 plane)
+    state[17, :, :] = board.fullmove_number / 100.0
+
+    # Attack maps (8 planes: 4 for white, 4 for black)
+    for color in chess.COLORS:
+        for piece_type, attack_index_offset in zip([chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK], range(4)):
+            pieces = board.pieces(piece_type, color)
+            for square in pieces:
+                attacks = board.attacks(square)
+                for attack_square in attacks:
+                    row = attack_square // 8
+                    col = attack_square % 8
+                    index = 18 + (4 * color + attack_index_offset)
+                    state[index, row, col] = 1
+
+    return torch.tensor(state)
 
 def get_material_score(board: chess.Board):
     piece_values = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9}
@@ -31,62 +104,47 @@ def get_material_score(board: chess.Board):
     black_score = sum(piece_values[piece] for piece in chess.PIECE_TYPES if piece in board.pieces(piece, chess.BLACK))
     return white_score - black_score if board.turn == chess.WHITE else black_score - white_score
 
-def get_positional_reward(board: chess.Board):
-    center_squares = [chess.D4, chess.D5, chess.E4, chess.E5]
-    reward = 0
-    for square in center_squares:
-        if board.piece_at(square) is not None:
-            piece = board.piece_at(square)
-            reward += 0.1 if piece.color == board.turn else -0.1
-    return reward
-
-def get_development_reward(board: chess.Board):
-    reward = 0
-    # Reward castling
-    if board.is_castling(board.peek()):
-        reward += 0.5
-    # Reward piece development: if minor pieces (Knight/Bishop) are off their starting positions
-    starting_positions = {
-        chess.WHITE: [chess.B1, chess.G1, chess.C1, chess.F1],
-        chess.BLACK: [chess.B8, chess.G8, chess.C8, chess.F8]
-    }
-    for square in starting_positions[board.turn]:
-        if not board.piece_at(square):
-            reward += 0.1
-    return reward
-
-def get_reward(board: chess.Board):
+def get_heuristic_score(board: chess.Board):
     """
-    Calculates the reward for a given board state, encouraging good play.
+    Combines multiple heuristics to calculate a score for the given board state.
     """
-    # Winning/Draw reward
-    if board.is_checkmate():
-        return 1.0  # Winning
-    elif board.is_stalemate() or board.is_insufficient_material() or \
-         board.is_fivefold_repetition() or board.is_seventyfive_moves():
-        return 0.0  # Draw
+    # Material Score
+    material_score = get_material_score(board)
 
-    # Material score difference reward
-    material_reward = 0.01 * get_material_score(board)
+    # Mobility Score (difference in number of legal moves)
+    white_mobility = len(list(board.legal_moves)) if board.turn == chess.WHITE else 0
+    board.push(chess.Move.null())
+    black_mobility = len(list(board.legal_moves)) if board.turn == chess.BLACK else 0
+    board.pop()
+    mobility_score = white_mobility - black_mobility if board.turn == chess.WHITE else black_mobility - white_mobility
 
-    # Positional control reward
-    positional_reward = get_positional_reward(board)
+    # King Safety (penalty for exposed king)
+    king_safety_score = 0
+    for color in chess.COLORS:
+        king_square = board.king(color)
+        if king_square is not None:
+            attacks = board.attackers(not color, king_square)
+            if attacks:
+                king_safety_score -= len(attacks) * (1 if color == chess.WHITE else -1)
 
-    # Piece development reward
-    development_reward = get_development_reward(board)
+    w_material, w_mobility, w_king_safety = 1.0, 0.1, 0.5
+    total_score = (w_material * material_score) + (w_mobility * mobility_score) + (w_king_safety * king_safety_score)
 
-    # Discourage too many moves without a goal
-    negative_move_penalty = -0.01
+    return total_score
 
-    # Total reward calculation
-    total_reward = material_reward + positional_reward + development_reward + negative_move_penalty
-
-    return total_reward
+def get_reward(board: chess.Board, is_terminal: bool):
+    if is_terminal:
+        if board.is_checkmate():
+            return 1.0 if board.turn == chess.BLACK else -1.0
+        else:
+            return 0.0
+    else:
+        return get_heuristic_score(board)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-model = Renatus(input_channels=12, num_blocks=5).to(device)
-target_net = Renatus(input_channels=12, num_blocks=5).to(device)
+model = RenatusV2(input_channels=27, num_blocks=19).to(device)
+target_net = RenatusV2(input_channels=27, num_blocks=19).to(device)
 target_net.load_state_dict(model.state_dict())
 target_net.eval()
 
@@ -102,18 +160,22 @@ def optimize_model():
 
     non_final_mask = torch.tensor(tuple(map(lambda s: s is not None,
                                           batch.next_state)), device=device, dtype=torch.bool)
-    non_final_next_states = torch.stack([s for s in batch.next_state
-                                                if s is not None])
+    non_final_next_states = torch.stack([s for s in batch.next_state if s is not None]).to(device)
     optimizer.zero_grad()
     
-    state_batch = torch.stack(batch.state)
-    action_batch = torch.cat(batch.action)
-    reward_batch = torch.cat(batch.reward)
+    state_batch = torch.stack(batch.state).to(device)
+    action_batch = torch.cat(batch.action).to(device)
+    reward_batch = torch.cat(batch.reward).to(device)
 
-    state_action_values = model(state_batch).gather(1, action_batch)
+    # Get policy and value from model
+    policy, state_values = model(state_batch)
+    state_action_values = state_values.gather(1, action_batch)
     
+    # Compute next state values using target network
     next_state_values = torch.zeros(configs.BATCH_SIZE, device=device)
-    next_state_values[non_final_mask] = target_net(non_final_next_states).max(1)[0].detach()
+    if non_final_next_states.size(0) > 0:
+        _, next_state_values_model = target_net(non_final_next_states)
+        next_state_values[non_final_mask] = next_state_values_model.max(1)[0].detach()
 
     expected_state_action_values = (next_state_values * configs.GAMMA) + reward_batch
 
