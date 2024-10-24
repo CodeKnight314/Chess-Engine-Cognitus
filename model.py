@@ -24,7 +24,7 @@ class ResidualBlock(nn.Module):
         return x
 
 class RenatusV1(nn.Module): 
-    def __init__(self, input_channels: int = 12, num_blocks: int = 8):
+    def __init__(self, input_channels: int = 12, num_blocks: int = 5):
         super().__init__()
         
         self.conv_one = nn.Conv2d(input_channels, out_channels=64, kernel_size=3, stride=1, padding=1)
@@ -89,46 +89,3 @@ class RenatusV2(nn.Module):
         value = torch.tanh(self.value_fc2(v))
 
         return policy, value
-
-class ReplayMemory:
-    def __init__(self, capacity):
-        self.capacity = capacity
-        self.memory = []
-        self.position = 0
-        self.Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
-
-    def push(self, *args):
-        """Saves a transition."""
-        if len(self.memory) < self.capacity:
-            self.memory.append(None)
-        self.memory[self.position] = self.Transition(*args)
-        self.position = (self.position + 1) % self.capacity
-
-    def sample(self, batch_size):
-        return random.sample(self.memory, batch_size)
-
-    def __len__(self):
-        return len(self.memory)
-
-def choose_legal_move(model: nn.Module, board, state, epsilon):
-    with torch.no_grad():
-        q_values = model(state.unsqueeze(0)).squeeze(0)
-    
-    q_values = q_values.reshape((64, 64))
-    
-    legal_moves = list(board.legal_moves)
-    
-    if random.random() < epsilon:
-        action = random.choice(legal_moves)
-    else:
-        legal_q_values = torch.full((64, 64), -float('inf'))
-
-        for move in legal_moves:
-            legal_q_values[move.from_square, move.to_square] = q_values[move.from_square, move.to_square]
-
-        best_action_index = legal_q_values.argmax()
-        from_square = best_action_index // 64
-        to_square = best_action_index % 64
-        action = chess.Move(from_square.item(), to_square.item())
-
-    return action
