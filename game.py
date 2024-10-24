@@ -1,6 +1,6 @@
 import pygame
 import chess
-from model import Renatus, choose_legal_move  # Import from your model.py
+from model import RenatusV1, choose_legal_move  # Import from your model.py
 from board import Board
 from configs import *  # Import constants from configs.py
 import torch
@@ -19,7 +19,7 @@ class Game:
         self.legal_moves = []
         self.game_mode = "human_vs_renatus"  # or "renatus_vs_renatus"
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.renatus_model = Renatus(input_channels=12, num_blocks=5).to(self.device)
+        self.renatus_model = RenatusV1(input_channels=12, num_blocks=5).to(self.device)
         if os.path.exists(MODEL_PATH):
             self.renatus_model.load_state_dict(torch.load(MODEL_PATH))  # Load your trained model
         self.renatus_model.eval()
