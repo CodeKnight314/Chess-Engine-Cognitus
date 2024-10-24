@@ -239,6 +239,7 @@ def train(args):
         # Update the target network, copying all weights and biases in DQN
         if episode % configs.TARGET_UPDATE == 0:
             target_net.load_state_dict(model.state_dict())
+            torch.save(target_net.state_dict(), f'target_net_episode_{episode}.pth')
 
         # Print episode information (optional)
         if episode % 100 == 0:
