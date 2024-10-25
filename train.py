@@ -9,20 +9,28 @@ import argparse
 from model import RenatusV2
 from tqdm import tqdm
 import random
-from mct_search import MonteSearch, Node
+from mct_search import MonteSearch, Node, get_state
 
 class ReplayMemory:
-    def __init__(self, capacity):
+    def __init__(self, capacity, device="cuda"):
         self.capacity = capacity
         self.memory = []
         self.position = 0
+        self.device = device
         self.Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'))
 
     def push(self, *args):
-        """Saves a transition."""
+        """Saves a transition on the specified device."""
+        transition = self.Transition(*args)
+        transition = self.Transition(
+            state=transition.state.to(self.device) if transition.state is not None else None,
+            action=transition.action.to(self.device),
+            next_state=transition.next_state.to(self.device) if transition.next_state is not None else None,
+            reward=transition.reward.to(self.device)
+        )
         if len(self.memory) < self.capacity:
             self.memory.append(None)
-        self.memory[self.position] = self.Transition(*args)
+        self.memory[self.position] = transition
         self.position = (self.position + 1) % self.capacity
 
     def sample(self, batch_size):
@@ -41,67 +49,10 @@ def choose_legal_move(model: nn.Module, board: chess.Board, state: torch.Tensor,
         best_board = MonteSearch(root, model, num_iterations=100)
         return best_board.move_stack[-1]
 
-def get_state(board: chess.Board):
-    """
-    Converts a chess.Board object into a PyTorch tensor representation.
-    Returns a tensor of shape (27, 8, 8) representing the enriched chess board state.
-    """
-    state = np.zeros((27, 8, 8), dtype=np.float32)
-
-    # Encode piece types (12 planes: 6 for white pieces, 6 for black pieces)
-    for piece_type in chess.PIECE_TYPES:
-        for color in chess.COLORS:
-            pieces = board.pieces(piece_type, color)
-            for square in pieces:
-                index = 6 * color + piece_type - 1
-                row = square // 8
-                col = square % 8
-                state[index, row, col] = 1
-
-    # Side to move (1 plane)
-    if board.turn == chess.WHITE:
-        state[12, :, :] = 1
-
-    # Castling rights (2 planes: one for white, one for black)
-    if board.has_kingside_castling_rights(chess.WHITE):
-        state[13, :, :] = 1
-    if board.has_queenside_castling_rights(chess.WHITE):
-        state[13, :, :] = 1
-    if board.has_kingside_castling_rights(chess.BLACK):
-        state[14, :, :] = 1
-    if board.has_queenside_castling_rights(chess.BLACK):
-        state[14, :, :] = 1
-
-    # En passant square (1 plane)
-    if board.ep_square is not None:
-        row = board.ep_square // 8
-        col = board.ep_square % 8
-        state[15, row, col] = 1
-
-    # Half-move clock (1 plane)
-    state[16, :, :] = board.halfmove_clock / 100.0
-
-    # Full-move number (1 plane)
-    state[17, :, :] = board.fullmove_number / 100.0
-
-    # Attack maps (8 planes: 4 for white, 4 for black)
-    for color in chess.COLORS:
-        for piece_type, attack_index_offset in zip([chess.PAWN, chess.KNIGHT, chess.BISHOP, chess.ROOK], range(4)):
-            pieces = board.pieces(piece_type, color)
-            for square in pieces:
-                attacks = board.attacks(square)
-                for attack_square in attacks:
-                    row = attack_square // 8
-                    col = attack_square % 8
-                    index = 18 + (4 * color + attack_index_offset)
-                    state[index, row, col] = 1
-
-    return torch.tensor(state)
-
 def get_material_score(board: chess.Board):
     piece_values = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9}
-    white_score = sum(piece_values[piece] for piece in chess.PIECE_TYPES if piece in board.pieces(piece, chess.WHITE))
-    black_score = sum(piece_values[piece] for piece in chess.PIECE_TYPES if piece in board.pieces(piece, chess.BLACK))
+    white_score = sum(piece_values.get(piece, 0) * len(board.pieces(piece, chess.WHITE)) for piece in chess.PIECE_TYPES)
+    black_score = sum(piece_values.get(piece, 0) * len(board.pieces(piece, chess.BLACK)) for piece in chess.PIECE_TYPES)
     return white_score - black_score if board.turn == chess.WHITE else black_score - white_score
 
 def get_heuristic_score(board: chess.Board):
@@ -169,9 +120,14 @@ def optimize_model():
 
     # Get policy and value from model
     policy, state_values = model(state_batch)
+    # Ensure action indices are within bounds
+    action_batch = torch.clamp(action_batch, 0, state_values.size(1) - 1)
+    
+    # Gather the state-action values based on the action indices
     state_action_values = state_values.gather(1, action_batch)
     
     # Compute next state values using target network
+    target_net.eval()
     next_state_values = torch.zeros(configs.BATCH_SIZE, device=device)
     if non_final_next_states.size(0) > 0:
         _, next_state_values_model = target_net(non_final_next_states)
@@ -183,8 +139,6 @@ def optimize_model():
     loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
     
     loss.backward()
-    for param in model.parameters():
-        param.grad.data.clamp_(-1, 1)
     optimizer.step()
 
 def train(args):
@@ -222,7 +176,7 @@ def train(args):
             next_board = board.copy()
             next_board.push(action)
             next_state = get_state(next_board) if not next_board.is_game_over() else None
-            reward = torch.tensor([get_reward(next_board)], device=device)
+            reward = torch.tensor([get_reward(next_board, next_board.is_game_over())], device=device)
             done = next_board.is_game_over()
 
             # Store the transition in memory
