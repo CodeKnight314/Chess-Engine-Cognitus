@@ -18,7 +18,7 @@ def supervised_train(args):
     policy_loss_fn = nn.CrossEntropyLoss()
     value_loss_fn = nn.MSELoss()    
     
-    train_dl = get_dataloader(args.file_path, "/opt/homebrew/bin/stockfish", 32)
+    train_dl = get_dataloader(args.file_path, 32)
     
     for epoch in range(args.epochs):
         model.train() 
@@ -39,7 +39,7 @@ def supervised_train(args):
             
             # Compute losses
             policy_loss = policy_loss_fn(pred_policy, policy_index)
-            value_loss = value_loss_fn(pred_value.squeeze(), value_tensor)
+            value_loss = value_loss_fn(pred_value, value_tensor)
             
             # Combine losses
             loss = policy_loss + value_loss
