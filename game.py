@@ -1,6 +1,7 @@
 import pygame
 import chess
-from model import RenatusV1, choose_legal_move  # Import from your model.py
+from model import RenatusV1  # Import from your model.py
+from engine import determine_move_with_opening_book
 from board import Board
 from configs import *  # Import constants from configs.py
 import torch
@@ -17,7 +18,7 @@ class Game:
         self.board_ui = Board(self.screen)
         self.selected_square = None
         self.legal_moves = []
-        self.game_mode = "human_vs_renatus"  # or "renatus_vs_renatus"
+        self.game_mode = "renatus_vs_renatus"  # or "renatus_vs_renatus"
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.renatus_model = RenatusV1(input_channels=12, num_blocks=5).to(self.device)
         if os.path.exists(MODEL_PATH):
@@ -77,6 +78,9 @@ class Game:
 
     def renatus_move(self):
         """Makes a move using the Renatus model."""
+        best_move = determine_move_with_opening_book(self.board, 4)
+        self.board.push(best_move)
+        """
         state = get_state(self.board).to(self.device)
         output = self.renatus_model(state)
         
@@ -98,6 +102,7 @@ class Game:
             self.board.push(chosen_move)
         else:
             raise ValueError("Unexpected output shape from Renatus model.")
+        """
 
 if __name__ == "__main__":
     game = Game()
