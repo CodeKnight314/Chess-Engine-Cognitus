@@ -97,8 +97,8 @@ def alpha_beta(depth: int, board: chess.Board, alpha: float, beta: float, time_m
     """
     Enhanced alpha-beta search with proper pruning
     """
-    if time_manager.is_time_up():
-        return board.turn and -float('inf') or float('inf')
+    if depth <= 0 or board.is_game_over() or time_manager.is_time_up(): 
+        return evaluate_board(board)    
     
     metrics.total_nodes += 1
     metrics.unique_positions.add(board.fen())
@@ -106,76 +106,48 @@ def alpha_beta(depth: int, board: chess.Board, alpha: float, beta: float, time_m
     zobrist_hash = chess.polyglot.zobrist_hash(board)
     key = (zobrist_hash, depth)
     
-    if depth <= 0:
-        return quiescence_search(board, alpha, beta)
-    
     if key in transposition_table:
         return transposition_table[key]
-
+    
     moves = sorted(board.legal_moves, 
                   key=lambda m: (board.is_capture(m), board.gives_check(m)),
                   reverse=True)
-
-    best_score = -float('inf') if board.turn else float('inf')
     
-    for move in moves:
-        board.push(move)
-        score = -alpha_beta(depth - 1, board, -beta, -alpha, time_manager)
-        board.pop()
-        
-        if board.turn:
-            best_score = max(best_score, score)
-            alpha = max(alpha, score)
-        else:
-            best_score = min(best_score, score)
-            alpha = min(alpha, score)
-        
-        if alpha >= beta:
-            metrics.pruned_nodes += 1
-            break
-    
-    add_to_transposition_table(key, best_score)
-    return best_score
-
-def quiescence_search(board: chess.Board, alpha: float, beta: float, max_depth=2):
-    """
-    A refined quiescence search implementation.
-    """
-    metrics.total_nodes += 1
-    metrics.quiescence_nodes += 1
-    metrics.unique_positions.add(board.fen())
-    
-    stand_pat = evaluate_board(board)
-    
-    if stand_pat >= beta:
-        metrics.pruned_nodes += 1
-        return beta
-    
-    alpha = max(alpha, stand_pat)
-    
-    if max_depth <= 0:  # Base case
-        return stand_pat
-
-    captures = [move for move in board.legal_moves if board.is_capture(move) or board.gives_check(move)]
-    
-    if not captures:
-        return stand_pat
-
-    for move in captures:
-        board.push(move)
-        score = -quiescence_search(board, -beta, -alpha, max_depth - 1)
-        board.pop()
-        
-        if score >= beta:
-            metrics.pruned_nodes += 1
-            return beta
-        
-        if board.turn:
-            alpha = max(alpha, score)
-        else:
-            alpha = min(alpha, score)    
+    if board.turn: 
+        max_eval = -float("inf")
+        for move in board.legal_moves: 
+            board.push(move)
+            eval = alpha_beta(depth-1, board, alpha, beta, time_manager)
+            board.pop() 
             
-    return alpha
+            if eval > max_eval: 
+                max_eval = eval 
+                
+            alpha = max(alpha, eval)
+            if beta <= alpha: 
+                metrics.pruned_nodes += 1
+                break
+        
+        add_to_transposition_table(key, max_eval)
+        
+        return max_eval
+    else: 
+        min_eval = float("inf")
+        for move in board.legal_moves: 
+            board.push(move)
+            eval = alpha_beta(depth-1, board, alpha, beta, time_manager)
+            board.pop()
+            
+            if eval < min_eval: 
+                min_eval = eval
+                
+            beta = min(beta, eval)
+            if beta <= alpha: 
+                break 
+            
+        add_to_transposition_table(key, min_eval)
+
+        return min_eval
 
 def evaluate_move_single(board: chess.Board, move: chess.Move, depth: int, time_manager: TimeManager) -> Optional[Tuple[chess.Move, float]]:
     """Single-threaded move evaluation with time checking"""
@@ -183,7 +155,7 @@ def evaluate_move_single(board: chess.Board, move: chess.Move, depth: int, time_
         return None
         
     board.push(move)
-    score = -alpha_beta(depth - 1, board, -float('inf'), float('inf'), time_manager)
+    score = alpha_beta(depth - 1, board, -float('inf'), float('inf'), time_manager)
     board.pop()
     return move, score
 
