@@ -119,7 +119,7 @@ def alpha_beta(depth: int, board: chess.Board, alpha: float, beta: float, time_m
     
     if board.turn: 
         max_eval = -float("inf")
-        for move in board.legal_moves: 
+        for move in moves: 
             board.push(move)
             eval = alpha_beta(depth-1, board, alpha, beta, time_manager)
             board.pop() 
@@ -137,7 +137,7 @@ def alpha_beta(depth: int, board: chess.Board, alpha: float, beta: float, time_m
         return max_eval
     else: 
         min_eval = float("inf")
-        for move in board.legal_moves: 
+        for move in moves: 
             board.push(move)
             eval = alpha_beta(depth-1, board, alpha, beta, time_manager)
             board.pop()
