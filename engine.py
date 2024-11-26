@@ -7,6 +7,7 @@ from typing import Tuple, OrderedDict
 from dataclasses import dataclass
 import time
 from typing import Optional, Tuple, List
+from tqdm import tqdm
 
 transposition_table = OrderedDict()
 MAX_TABLE_SIZE = 1_000_000
@@ -22,6 +23,7 @@ class SearchMetrics:
     unique_positions: set = None
     pruned_nodes: int = 0
     quiescence_nodes: int = 0
+    depth: int = float('inf')
     
     def __post_init__(self):
         self.unique_positions = set()
@@ -34,6 +36,7 @@ class SearchMetrics:
         
     def print_stats(self):
         print("\nSearch Statistics:")
+        print(f"Max Depth Searched: {5 - self.depth}")
         print(f"Total nodes visited: {self.total_nodes:,}")
         print(f"Unique positions evaluated: {len(self.unique_positions):,}")
         print(f"Positions pruned: {self.pruned_nodes:,}")
@@ -97,6 +100,7 @@ def alpha_beta(depth: int, board: chess.Board, alpha: float, beta: float, time_m
     """
     Enhanced alpha-beta search with proper pruning
     """
+    metrics.depth = min(depth, metrics.depth)
     if depth <= 0 or board.is_game_over() or time_manager.is_time_up(): 
         return evaluate_board(board)    
     
@@ -155,88 +159,71 @@ def evaluate_move_single(board: chess.Board, move: chess.Move, depth: int, time_
         return None
         
     board.push(move)
-    score = alpha_beta(depth - 1, board, -float('inf'), float('inf'), time_manager)
+    score = alpha_beta(depth, board, -float('inf'), float('inf'), time_manager)
     board.pop()
     return move, score
 
 def find_best_move(board: chess.Board, depth: int, time_limit: float = 15.0) -> chess.Move:
-    """
-    Main function to find the best move with proper time management
-    Args:
-        board: Current board position
-        depth: Maximum search depth
-        time_limit: Maximum time in seconds to search (default 15s)
-    """
-    # Reset metrics for new search
     metrics.reset()
-    
-    # Initialize time manager
     time_manager = TimeManager(time.time(), time_limit)
     
-    # Check opening book
+    # Opening book check remains same
     best_move = get_opening_move(board)
     if best_move:
         return best_move
     
     moves = list(board.legal_moves)
-    current_best_move = moves[0]  # Always have a move ready
+    current_best_move = moves[0]
     current_best_score = float('-inf') if board.turn else float('inf')
     completed_moves = []
     
-    # Time allocation per move (reserve 10% for overhead)
-    allocated_time_per_move = (time_limit * 0.9) / len(moves)
-    
-    # Evaluate moves sequentially with time checking
-    for move_index, move in enumerate(moves):
-        # Early exit if we're running out of time
-        if time_manager.is_time_up():
-            print("\nSearch stopped due to time limit!")
-            break
-            
-        try:
-            # Adjust depth based on remaining time and moves
-            remaining_moves = len(moves) - move_index
-            remaining_time = time_limit - (time.time() - time_manager.start_time)
-            if remaining_time < 0:
+    for current_depth in range(1, depth + 1):
+        depth_best_move = None
+        depth_best_score = float('-inf') if board.turn else float('inf')
+        
+        print(f"\nSearching depth {current_depth}...")
+        
+        for move in tqdm(moves, desc=f"Evaluating {len(moves)} moves"):
+            if time_manager.is_time_up():
+                print("\nSearch stopped due to time limit!")
                 break
                 
-            # Dynamically adjust depth if we're running out of time
-            current_depth = depth
-            if remaining_time < allocated_time_per_move * remaining_moves:
-                current_depth = max(1, depth - 1)  # Reduce depth if running out of time
-            
-            result = evaluate_move_single(board, move, current_depth, time_manager)
-            if result is None:  # Time up during evaluation
-                break
-                
-            move, score = result
-            completed_moves.append((move, score))
-            
-            # Update best move
-            if board.turn:  # White to move (maximizing)
-                if score > current_best_score:
-                    current_best_score = score
-                    current_best_move = move
-            else:  # Black to move (minimizing)
-                if score < current_best_score:
-                    current_best_score = score
-                    current_best_move = move
+            try:
+                result = evaluate_move_single(board, move, current_depth, time_manager)
+                if result is None:
+                    break
                     
-        except Exception as e:
-            print(f"\nError evaluating move {move}: {e}")
-            continue
+                evaluated_move, score = result
+                
+                if board.turn:
+                    if score > depth_best_score:
+                        depth_best_score = score
+                        depth_best_move = move
+                else: 
+                    if score < depth_best_score:
+                        depth_best_score = score
+                        depth_best_move = move
+                        
+            except Exception as e:
+                print(f"\nError evaluating move {move}: {e}")
+                continue
+        
+        if depth_best_move is not None:
+            current_best_move = depth_best_move
+            current_best_score = depth_best_score
+            completed_moves.append((current_best_move, current_best_score))
+            print(f"Depth {current_depth} complete - Best move: {current_best_move} (score: {current_best_score:.2f})")
+        
+        if time_manager.is_time_up():
+            break
     
+    # Print final statistics
     end_time = time.time() - time_manager.start_time
-    
-    # Print search statistics
     metrics.print_stats()
+    print(f"\nFinal Results:")
     print(f"Time taken: {end_time:.2f} seconds")
-    print(f"Moves evaluated: {len(completed_moves)} out of {len(moves)}")
-    if end_time > 0:  # Avoid division by zero
-        print(f"Nodes per second: {metrics.total_nodes / end_time:,.0f}")
+    print(f"Maximum depth reached: {len(completed_moves)}")
+    print(f"Nodes per second: {metrics.total_nodes / end_time:,.0f}")
     print(f"Best move: {current_best_move} (score: {current_best_score:.2f})")
-    
-    if end_time >= time_limit:
-        print("Search terminated due to time limit!")
     
     return current_best_move
