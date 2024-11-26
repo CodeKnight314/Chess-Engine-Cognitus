@@ -1,14 +1,11 @@
 import chess
 import chess.polyglot
-from concurrent.futures import ProcessPoolExecutor
 import time
 import random 
-from cache import PIECE_SQUARE_TABLES
+from score import evaluate_board
 from typing import Tuple, OrderedDict
 from dataclasses import dataclass
-import concurrent.futures
 import time
-import signal
 from typing import Optional, Tuple, List
 
 transposition_table = OrderedDict()
@@ -82,108 +79,10 @@ def track_time(func_name, start_time):
         timing_stats[func_name] = 0.0
     timing_stats[func_name] += elapsed_time
 
-def get_material_score(board: chess.Board):
-    piece_values = {chess.PAWN: 100, chess.KNIGHT: 320, chess.BISHOP: 330,
-                    chess.ROOK: 500, chess.QUEEN: 900, chess.KING: 20000}
-    white_score = sum(piece_values[piece] * len(board.pieces(piece, chess.WHITE))
-                      for piece in chess.PIECE_TYPES)
-    black_score = sum(piece_values[piece] * len(board.pieces(piece, chess.BLACK))
-                      for piece in chess.PIECE_TYPES)
-    return white_score - black_score
-
-def evaluate_piece_square_table(board):
-    """
-    Evaluates piece positions using piece-square tables.
-    """
-    score = 0
-    for square in chess.SQUARES:
-        piece = board.piece_at(square)
-        if piece:
-            table = PIECE_SQUARE_TABLES.get(piece.piece_type, [0] * 64)
-            if piece.color == chess.WHITE:
-                score += table[square]
-            else:
-                score -= table[chess.square_mirror(square)]
-    return score
-
-def evaluate_captures(board):
-    """
-    Evaluates potential captures to favor moves with material gains.
-    """
-    capture_score = 0
-    for move in board.legal_moves:
-        if board.is_capture(move):
-            piece_captured = board.piece_at(move.to_square)
-            if piece_captured:
-                piece_values = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3,
-                                chess.ROOK: 5, chess.QUEEN: 9, chess.KING: 0}
-                capture_score += piece_values[piece_captured.piece_type]
-    return capture_score
-
-def get_checkmate_score(board):
-    """
-    Assigns a high score for checkmates and a penalty for stalemates.
-    """
-    if board.is_checkmate():
-        return 1000000 if board.turn == chess.BLACK else -1000000  # High value for winning positions
-    elif board.is_stalemate():
-        return -500  # Penalty for stalemate
-    return 0
-
-def evaluate_positional_features(board):
-    """
-    Evaluates positional features such as center control and piece activity.
-    """
-    center_squares = [chess.E4, chess.D4, chess.E5, chess.D5]
-    center_control = sum(1 for square in center_squares if board.piece_at(square))
-    return center_control
-
-def get_heuristic_score(board: chess.Board):
-    start_time = time.time()
-
-    # Checkmate/Stalemate
-    checkmate_score = get_checkmate_score(board)
-    if checkmate_score != 0:
-        return checkmate_score
-
-    # Material, Mobility, and King Safety
-    material_score = get_material_score(board)
-    white_mobility = len(list(board.legal_moves))
-
-    board.push(chess.Move.null())
-    black_mobility = len(list(board.legal_moves))
-    board.pop()
-    mobility_score = white_mobility - black_mobility
-    white_king_square = board.king(chess.WHITE)
-    black_king_square = board.king(chess.BLACK)
-    white_king_attacks = len(board.attackers(chess.BLACK, white_king_square)) if white_king_square else 0
-    black_king_attacks = len(board.attackers(chess.WHITE, black_king_square)) if black_king_square else 0
-    king_safety_score = -white_king_attacks + black_king_attacks
-
-    # Tactical and Positional Features
-    capture_score = evaluate_captures(board)
-    positional_score = evaluate_positional_features(board)
-    pst_score = evaluate_piece_square_table(board)
-
-    # Weights
-    w_material, w_mobility, w_king_safety, w_tactics, w_position = 2.0, 0.5, 1.0, 0.75, 0.5
-    total_score = (w_material * material_score +
-                   w_mobility * mobility_score +
-                   w_king_safety * king_safety_score +
-                   w_tactics * capture_score +
-                   w_position * (positional_score + pst_score))
-
-    return total_score
-
-def evaluate_board(board: chess.Board):
-    score = get_heuristic_score(board)
-    return score
-
 def order_moves(board):
     moves = list(board.legal_moves)
     moves.sort(key=lambda move: (
         board.is_capture(move),
-        board.gives_check(move),
         transposition_table.get((chess.polyglot.zobrist_hash(board), 0), {}).get('value', 0)
     ), reverse=True)
     return moves
@@ -200,17 +99,13 @@ def alpha_beta(depth: int, board: chess.Board, alpha: float, beta: float, time_m
     """
     if time_manager.is_time_up():
         return board.turn and -float('inf') or float('inf')
+    
     metrics.total_nodes += 1
     metrics.unique_positions.add(board.fen())
     
     zobrist_hash = chess.polyglot.zobrist_hash(board)
     key = (zobrist_hash, depth)
-
-    if board.is_game_over():
-        if board.is_checkmate():
-            return -float('inf') if board.turn else float('inf')
-        return 0
-
+    
     if depth <= 0:
         return quiescence_search(board, alpha, beta)
     
@@ -221,18 +116,19 @@ def alpha_beta(depth: int, board: chess.Board, alpha: float, beta: float, time_m
                   key=lambda m: (board.is_capture(m), board.gives_check(m)),
                   reverse=True)
 
-    if len(moves) == 0:
-        return 0
-
-    best_score = -float('inf')
+    best_score = -float('inf') if board.turn else float('inf')
     
     for move in moves:
         board.push(move)
         score = -alpha_beta(depth - 1, board, -beta, -alpha, time_manager)
         board.pop()
         
-        best_score = max(best_score, score)
-        alpha = max(alpha, score)
+        if board.turn:
+            best_score = max(best_score, score)
+            alpha = max(alpha, score)
+        else:
+            best_score = min(best_score, score)
+            alpha = min(alpha, score)
         
         if alpha >= beta:
             metrics.pruned_nodes += 1
@@ -257,7 +153,7 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, max_depth=2
     
     alpha = max(alpha, stand_pat)
     
-    if max_depth is not None and max_depth <= 0:
+    if max_depth <= 0:  # Base case
         return stand_pat
 
     captures = [move for move in board.legal_moves if board.is_capture(move) or board.gives_check(move)]
@@ -267,17 +163,19 @@ def quiescence_search(board: chess.Board, alpha: float, beta: float, max_depth=2
 
     for move in captures:
         board.push(move)
-        score = -quiescence_search(board, -beta, -alpha, None if max_depth is None else max_depth - 1)
+        score = -quiescence_search(board, -beta, -alpha, max_depth - 1)
         board.pop()
         
         if score >= beta:
             metrics.pruned_nodes += 1
             return beta
         
-        alpha = max(alpha, score)
-    
+        if board.turn:
+            alpha = max(alpha, score)
+        else:
+            alpha = min(alpha, score)    
+            
     return alpha
-
 
 def evaluate_move_single(board: chess.Board, move: chess.Move, depth: int, time_manager: TimeManager) -> Optional[Tuple[chess.Move, float]]:
     """Single-threaded move evaluation with time checking"""
