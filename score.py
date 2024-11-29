@@ -52,7 +52,7 @@ def evaluate_board(board: chess.Board) -> float:
         if board.is_capture(move):
             captured_piece = board.piece_at(move.to_square)
             if captured_piece:
-                capture_value = PIECE_VALUES[captured_piece.piece_type]
+                capture_value = PIECE_VALUES[captured_piece.piece_type] * 0.1
                 score += capture_value if board.turn == chess.WHITE else -capture_value
 
     # Mobility for both sides
