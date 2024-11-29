@@ -11,7 +11,7 @@ class Game:
     def __init__(self):
         pygame.init()
         self.screen = pygame.display.set_mode((BOARD_SIZE * SQUARE_SIZE, BOARD_SIZE * SQUARE_SIZE))
-        pygame.display.set_caption("Renatus Chess")
+        pygame.display.set_caption("Cognitus Chess")
         self.clock = pygame.time.Clock()
         self.board = chess.Board()
         self.board_ui = Board(self.screen)
@@ -21,8 +21,8 @@ class Game:
 
     def run(self):
         running = True
-        os.makedirs("Games_As_PGN/", exist_ok=True)
-        filename = os.path.join("Games_As_PGN",f"{time.time()}-game.pgn")
+        os.makedirs("saved_pgn/", exist_ok=True)
+        filename = os.path.join("saved_pgn",f"{time.time()}-game.pgn")
         
         game = chess.pgn.Game()
         node = game
@@ -42,17 +42,15 @@ class Game:
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.MOUSEBUTTONDOWN and self.board.turn == user_turn:
-                    # Only handle mouse clicks when it's human's turn in human_vs_renatus
                     usr_move = self.handle_mouse_click()
                     if usr_move:
                         node = node.add_variation(usr_move)
                         print(game, file=open(filename, "w"), end="\n\n")
 
-            # Drawing board and pieces
-            self.screen.fill((0, 0, 0))  # Clear the screen
+            self.screen.fill((0, 0, 0))
             self.board_ui.draw(self.board, self.selected_square, self.legal_moves)
             pygame.display.flip()
-            self.clock.tick(60)  # Limit frame rate
+            self.clock.tick(60)
 
             if not self.board.is_game_over():
                 if self.game_mode == "renatus_vs_renatus":
@@ -106,7 +104,7 @@ class Game:
     def renatus_move(self):
         """Makes a move using the Renatus model."""
         print(f"\nThinking move for {"White" if self.board.turn else "Black"}")
-        best_move = find_best_move(self.board, 5, time_limit=20)
+        best_move = find_best_move(self.board, 4, time_limit=20)
         self.board.push(best_move)
         return best_move
 
