@@ -104,7 +104,7 @@ class Game:
     def renatus_move(self):
         """Makes a move using the Renatus model."""
         print(f"\nThinking move for {"White" if self.board.turn else "Black"}")
-        best_move = find_best_move(self.board, 4, time_limit=20)
+        best_move = find_best_move(self.board, 8, time_limit=20)
         self.board.push(best_move)
         return best_move
 
