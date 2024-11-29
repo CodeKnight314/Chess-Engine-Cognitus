@@ -1,6 +1,9 @@
 # Chess-Engine-Cognitus
 
 ## Overview
+<p align="center">
+  <img src="images/Cognitus Logo.png" alt="Cognitus Logo">
+</p>
 
 This is a python-based chess engine for deploying algorithmic-based min-maxing game-playing agents with Alpha-Beta pruning. Due to Python's inherent slow runtime, the engine, Cognitus, is restricted to limited depth and time. As of now, it performs suboptimally at Depth 3-5 for any given board with a 20-second time limit. With future optimization including Cython or Numba, Cognitus aims to run at competitive speeds and search at impressive depths.
 
