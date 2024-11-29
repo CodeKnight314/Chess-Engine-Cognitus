@@ -3,10 +3,9 @@ import chess.polyglot
 import time
 import random 
 from score import evaluate_board
-from typing import Tuple, OrderedDict
+from typing import Tuple, OrderedDict, Optional, Tuple
 from dataclasses import dataclass
 import time
-from typing import Optional, Tuple, List
 from tqdm import tqdm
 
 transposition_table = OrderedDict()
@@ -42,6 +41,7 @@ class SearchMetrics:
         print(f"Positions pruned: {self.pruned_nodes:,}")
         print(f"Quiescence nodes: {self.quiescence_nodes:,}")
         print(f"Node reuse rate: {((self.total_nodes - len(self.unique_positions)) / self.total_nodes * 100):.2f}%")
+
 @dataclass
 class TimeManager:
     start_time: float
@@ -82,13 +82,40 @@ def track_time(func_name, start_time):
         timing_stats[func_name] = 0.0
     timing_stats[func_name] += elapsed_time
 
+def get_piece_value(piece_type):
+    """
+    Returns the relative value of each piece type.
+    """
+    piece_values = {
+        1: 100,
+        2: 300,
+        3: 300,
+        4: 500,
+        5: 900,
+        6: 0
+    }
+    return piece_values.get(piece_type, 0)
+
 def order_moves(board):
-    moves = list(board.legal_moves)
-    moves.sort(key=lambda move: (
-        board.is_capture(move),
-        transposition_table.get((chess.polyglot.zobrist_hash(board), 0), {}).get('value', 0)
-    ), reverse=True)
-    return moves
+    scored_moves = []
+    
+    for move in board.legal_moves:
+        aggressor = board.piece_type_at(move.from_square)
+        victim = board.piece_type_at(move.to_square)
+    
+        if victim:
+            score = get_piece_value(victim) * 100 - get_piece_value(aggressor)
+        else:
+            score = -1000
+            
+            if move.promotion:
+                score += get_piece_value(move.promotion) * 50
+        
+        scored_moves.append((score, move))
+    
+    scored_moves.sort(reverse=True, key=lambda x: x[0])
+    
+    return [move for score, move in scored_moves]
 
 def add_to_transposition_table(key: Tuple[int, int], value: float):
     """Add position to transposition table with LRU eviction"""
@@ -113,9 +140,7 @@ def alpha_beta(depth: int, board: chess.Board, alpha: float, beta: float, time_m
     if key in transposition_table:
         return transposition_table[key]
     
-    moves = sorted(board.legal_moves, 
-                  key=lambda m: (board.is_capture(m), board.gives_check(m)),
-                  reverse=True)
+    moves = order_moves(board)
     
     if board.turn: 
         max_eval = -float("inf")
@@ -161,7 +186,7 @@ def evaluate_move_single(board: chess.Board, move: chess.Move, depth: int, time_
     board.push(move)
     score = alpha_beta(depth, board, -float('inf'), float('inf'), time_manager)
     board.pop()
-    return move, score
+    return score
 
 def find_best_move(board: chess.Board, depth: int, time_limit: float = 15.0) -> chess.Move:
     metrics.reset()
@@ -189,12 +214,10 @@ def find_best_move(board: chess.Board, depth: int, time_limit: float = 15.0) -> 
                 break
                 
             try:
-                result = evaluate_move_single(board, move, current_depth, time_manager)
-                if result is None:
+                score = evaluate_move_single(board, move, current_depth, time_manager)
+                if score is None:
                     break
-                    
-                evaluated_move, score = result
-                
+                                    
                 if board.turn:
                     if score > depth_best_score:
                         depth_best_score = score
@@ -209,8 +232,14 @@ def find_best_move(board: chess.Board, depth: int, time_limit: float = 15.0) -> 
                 continue
         
         if depth_best_move is not None:
-            current_best_move = depth_best_move
-            current_best_score = depth_best_score
+            if board.turn:  # White
+                if depth_best_score > current_best_score:
+                    current_best_move = depth_best_move
+                    current_best_score = depth_best_score
+            else:  # Black
+                if depth_best_score < current_best_score:
+                    current_best_move = depth_best_move
+                    current_best_score = depth_best_score
             completed_moves.append((current_best_move, current_best_score))
             print(f"Depth {current_depth} complete - Best move: {current_best_move} (score: {current_best_score:.2f})")
         
