@@ -1,0 +1,6 @@
+python-chess
+numpy
+torch
+tqdm 
+pygame
+time 
