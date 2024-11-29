@@ -172,6 +172,7 @@ def alpha_beta(depth: int, board: chess.Board, alpha: float, beta: float, time_m
                 
             beta = min(beta, eval)
             if beta <= alpha: 
+                metrics.pruned_nodes += 1
                 break 
             
         add_to_transposition_table(key, min_eval)
@@ -198,9 +199,7 @@ def find_best_move(board: chess.Board, depth: int, time_limit: float = 15.0) -> 
         return best_move
     
     moves = list(board.legal_moves)
-    current_best_move = moves[0]
-    current_best_score = float('-inf') if board.turn else float('inf')
-    completed_moves = []
+    completed_moves = {}
     
     for current_depth in range(1, depth + 1):
         depth_best_move = None
@@ -230,21 +229,21 @@ def find_best_move(board: chess.Board, depth: int, time_limit: float = 15.0) -> 
             except Exception as e:
                 print(f"\nError evaluating move {move}: {e}")
                 continue
+        print(f"\n Best move found at depth {current_depth}: {depth_best_move} (Eval: {depth_best_score})")
         
         if depth_best_move is not None:
-            if board.turn:  # White
-                if depth_best_score > current_best_score:
-                    current_best_move = depth_best_move
-                    current_best_score = depth_best_score
-            else:  # Black
-                if depth_best_score < current_best_score:
-                    current_best_move = depth_best_move
-                    current_best_score = depth_best_score
-            completed_moves.append((current_best_move, current_best_score))
-            print(f"Depth {current_depth} complete - Best move: {current_best_move} (score: {current_best_score:.2f})")
+            completed_moves[depth_best_move] = depth_best_score
         
         if time_manager.is_time_up():
             break
+    
+    if board.turn:
+        sorted_moves = sorted(completed_moves, key=lambda k: completed_moves[k], reverse=True)
+    else: 
+        sorted_moves = sorted(completed_moves, key=lambda k: completed_moves[k], reverse=False)
+    
+    current_best_move = sorted_moves[0]
+    current_best_score = completed_moves[current_best_move]
     
     # Print final statistics
     end_time = time.time() - time_manager.start_time
