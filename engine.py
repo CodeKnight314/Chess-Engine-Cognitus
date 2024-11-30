@@ -225,7 +225,9 @@ def find_best_move(board: chess.Board, depth: int, time_limit: float = 15.0) -> 
                     if score < depth_best_score:
                         depth_best_score = score
                         depth_best_move = move
-                        
+                
+                completed_moves[move] = score
+        
             except Exception as e:
                 print(f"\nError evaluating move {move}: {e}")
                 continue
